@@ -9,16 +9,23 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@privy-io/react-auth": "^1.60.5",
+    "@privy-io/wagmi-connector": "^0.1.13",
+    "@wagmi/chains": "^1.8.0",
+    "next": "14.2.1",
+    "next-themes": "^0.3.0",
+    "permissionless": "^0.1.17",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.1"
+    "viem": "^2.9.19",
+    "wagmi": "~1.4.13"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "postcss": "^8",
-    "tailwindcss": "^3.4.1"
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
   }
 }
