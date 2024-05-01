@@ -1,21 +1,17 @@
-import {createContext, ReactNode, useContext, useState} from "react";
+import { createContext, ReactNode, useContext, useState, useEffect } from "react";
 import {
   createPublicClient,
   createWalletClient,
   custom,
   http,
-  createClient,
 } from "viem";
-import {ConnectedWallet, useWallets} from "@privy-io/react-auth";
-import {useEffect} from "react";
-import {
-  createSmartAccountClient,
-  ENTRYPOINT_ADDRESS_V06,
-  walletClientToSmartAccountSigner,
-} from "permissionless";
-import {signerToSimpleSmartAccount} from "permissionless/accounts";
-import {sepolia} from "viem/chains";
-import {
+import { useWalletClient } from "wagmi";
+import { ConnectedWallet, useWallets } from "@privy-io/react-auth";
+import { usePrivyWagmi } from "@privy-io/wagmi-connector";
+import { createSmartAccountClient, walletClientToSmartAccountSigner } from "permissionless";
+import { signerToSafeSmartAccount } from "permissionless/accounts";
+import { sepolia } from "viem/chains";
+import { 
   SEPOLIA_ENTRYPOINT_ADDRESS,
   SMART_ACCOUNT_FACTORY_ADDRESS,
 } from "../constants/constants";
@@ -25,13 +21,9 @@ import {
 } from "permissionless/clients/pimlico";
 
 interface SmartAccountInterface {
-  /** Privy embedded wallet, used as a signer for the smart account */
   eoa: ConnectedWallet | undefined;
-  /** Smart account client to send signature/transaction requests to the smart account */
   smartAccountClient: any;
-  /** Smart account address */
   smartAccountAddress: `0x${string}` | undefined;
-  /** Boolean to indicate whether the smart account state has initialized */
   smartAccountReady: boolean;
 }
 
@@ -42,80 +34,65 @@ const SmartAccountContext = createContext<SmartAccountInterface>({
   smartAccountReady: false,
 });
 
-export const SmartAccountContextProvider = ({
-  children,
-}: {
-  children: ReactNode;
-}) => {
-  const {wallets} = useWallets();
-  // Find the embedded wallet by finding the entry in the list with a `walletClientType` of 'privy'
-  const embeddedWallet = wallets.find(
-    (wallet) => wallet.walletClientType === "privy"
-  );
+export const SmartAccountContextProvider = ({ children }: { children: ReactNode; }) => {
+  const { wallets } = useWallets();
+  const { data: walletClient } = useWalletClient();
 
-  // States to store the smart account and its status
+  const embeddedWallet = wallets.find((wallet) => wallet.walletClientType === "privy");
+  const { setActiveWallet } = usePrivyWagmi();
+
+  useEffect(() => {
+    setActiveWallet(embeddedWallet);
+  }, [embeddedWallet]);
+
   const [eoa, setEoa] = useState<ConnectedWallet | undefined>();
   const [smartAccountClient, setSmartAccountClient] = useState<any>();
-  const [smartAccountAddress, setSmartAccountAddress] = useState<
-    `0x${string}` | undefined
-  >();
+  const [smartAccountAddress, setSmartAccountAddress] = useState<`0x${string}` | undefined>();
   const [smartAccountReady, setSmartAccountReady] = useState(false);
 
   useEffect(() => {
-    // Creates a smart account given a Privy `ConnectedWallet` object representing
-    // the  user's EOA.
     const createSmartWallet = async (eoa: ConnectedWallet) => {
       setEoa(eoa);
-      // Get an EIP1193 provider and viem WalletClient for the EOA
-      const eip1193provider = await eoa.getEthereumProvider();
 
+      if (!walletClient) return;
+
+      const eip1193provider = await eoa.getEthereumProvider();
       const privyClient = createWalletClient({
         account: eoa.address as `0x${string}`,
         chain: sepolia,
         transport: custom(eip1193provider),
       });
 
-      const customSigner = walletClientToSmartAccountSigner(privyClient);
-
+      const signer = walletClientToSmartAccountSigner(privyClient);
       const publicClient = createPublicClient({
-        chain: sepolia, // Replace this with the chain of your app
-        transport: http(),
+        transport: http("https://rpc.ankr.com/eth_sepolia"),
       });
 
-      const simpleSmartAccountClient = await signerToSimpleSmartAccount(
-        publicClient,
-        {
-          entryPoint: SEPOLIA_ENTRYPOINT_ADDRESS,
-          signer: customSigner,
-          factoryAddress: SMART_ACCOUNT_FACTORY_ADDRESS,
-        }
-      );
+      const safeAccount = await signerToSafeSmartAccount(publicClient, {
+        entryPoint:SEPOLIA_ENTRYPOINT_ADDRESS,
+        signer: signer,
+        safeVersion: "1.4.1",
+        address: "0x...",
+      });
 
       const bundlerClient = createPimlicoBundlerClient({
-        transport: http(
-          `https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`
-        ),
-        entryPoint: ENTRYPOINT_ADDRESS_V06,
+        transport: http(`https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`),
+        entryPoint: SEPOLIA_ENTRYPOINT_ADDRESS,
       });
 
       const paymasterClient = createPimlicoPaymasterClient({
-        transport: http(
-          `https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`
-        ),
-        entryPoint: ENTRYPOINT_ADDRESS_V06,
+        transport: http(`https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`),
+        entryPoint: SEPOLIA_ENTRYPOINT_ADDRESS,
       });
 
       const smartAccountClient = createSmartAccountClient({
-        account: simpleSmartAccountClient,
+        account: safeAccount,
         entryPoint: SEPOLIA_ENTRYPOINT_ADDRESS,
-        chain: sepolia, // Replace this with the chain for your app
-        bundlerTransport: http(
-          `https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`
-        ),
+        chain: sepolia,
+        bundlerTransport: http(`https://api.pimlico.io/v2/sepolia/rpc?apikey=${process.env.NEXT_PUBLIC_PIMILICO_API_KEY}`),
         middleware: {
-          gasPrice: async () =>
-            (await bundlerClient.getUserOperationGasPrice()).fast, // use pimlico bundler to get gas prices
-          sponsorUserOperation: paymasterClient.sponsorUserOperation, // optional
+          gasPrice: async () => (await bundlerClient.getUserOperationGasPrice()).fast,
+          sponsorUserOperation: paymasterClient.sponsorUserOperation,
         },
       });
 
@@ -127,9 +104,20 @@ export const SmartAccountContextProvider = ({
     };
 
     if (embeddedWallet) createSmartWallet(embeddedWallet);
-  }, [embeddedWallet?.address]);
+  }, [embeddedWallet?.address, walletClient]);
 
-  const buildUserOperation = async () => {};
+  // Function to send a transaction using the smart account client
+  const sendTransaction = async (to: string, value: string) => {
+    if (!smartAccountClient) return; // Check if smart account client is available
+
+    const txHash = await smartAccountClient.sendTransaction({
+      to: to,
+      value: value,
+    });
+
+    return txHash; // Return transaction hash
+  };
+
   return (
     <SmartAccountContext.Provider
       value={{
@@ -137,6 +125,7 @@ export const SmartAccountContextProvider = ({
         smartAccountClient: smartAccountClient,
         smartAccountAddress: smartAccountAddress,
         eoa: eoa,
+        // sendTransaction: sendTransaction, // Include sendTransaction function in the context value
       }}
     >
       {children}
